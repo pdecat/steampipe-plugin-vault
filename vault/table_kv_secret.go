@@ -25,6 +25,7 @@ type KvSecret struct {
 	DeletionTime time.Time
 	Destroyed    bool
 	Version      int64
+	Content      string
 }
 
 // Defines the table structure and functions to get vault kv secret data
@@ -57,6 +58,7 @@ func tableKvSecret() *plugin.Table {
 			{Name: "deletion_time", Type: proto.ColumnType_TIMESTAMP, Description: "The date and time the secret was destroyed, if destroyed"},
 			{Name: "destroyed", Type: proto.ColumnType_BOOL, Description: "Whether the secret was destroyed"},
 			{Name: "version", Type: proto.ColumnType_INT, Description: "The current version of the secret"},
+			{Name: "content", Type: proto.ColumnType_JSON, Description: "The content of the current version of the secret"},
 		},
 	}
 }
@@ -91,6 +93,24 @@ func getSecretMetadata(ctx context.Context, client *api.Client, secret *KvSecret
 	// The returned structure contains a map of versions and their properties. E.g. {..., "versions": { "1": { "destroyed": true } } }
 	// This line walks tha tree and fetches the "destroyed" property of the current version
 	secret.Destroyed = metadata.Data["versions"].(map[string]interface{})[fmt.Sprintf("%d", secret.Version)].(map[string]interface{})["destroyed"].(bool)
+
+	dataUrl := fmt.Sprintf("/%sdata/%s%s", secret.Mount, secret.Path, secret.Name)
+	logger.Debug("vault_kv_secret: getSecretMetadata", "dataUrl", dataUrl)
+	data, err := client.Logical().ReadWithDataWithContext(ctx, dataUrl, map[string][]string{"version": {fmt.Sprintf("%d", secret.Version)}})
+	logger.Debug("vault_kv_secret: getSecretMetadata", "data", fmt.Sprintf("%#v", data))
+
+	if err != nil {
+		return nil, err
+	}
+	if data == nil {
+		return nil, nil
+	}
+	content, err := json.Marshal(data.Data["data"])
+	if err != nil {
+		return nil, err
+	}
+
+	secret.Content = string(content)
 
 	return secret, nil
 }
